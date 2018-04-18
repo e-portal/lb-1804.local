@@ -4,9 +4,13 @@ namespace App\Http\Controllers\Auth;
 
 use App\User;
 use App\Http\Controllers\Controller;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Foundation\Auth\RegistersUsers;
+
+use App\Jobs\SendVerificationEmail;
+use Illuminate\Auth\Events\Registered;
 
 class RegisterController extends Controller
 {
@@ -68,7 +72,46 @@ class RegisterController extends Controller
             'name' => $data['name'],
             'last_name' => $data['last_name'],
             'email' => $data['email'],
+            'email_token' => str_random(64),
             'password' => Hash::make($data['password']),
         ]);
+    }
+
+    /**
+     * Handle a registration request for the application.
+     *
+     * @param \Illuminate\Http\Request $request
+     * @return \Illuminate\Http\Response
+     */
+    public function register(Request $request)
+    {
+        $this->validator($request->all())->validate();
+        event(new Registered($user = $this->create($request->all())));
+        dispatch(new SendVerificationEmail($user));
+        return view('auth.verification');
+    }
+    /**
+     * Handle a registration request for the application.
+     *
+     * @param $token
+     * @return \Illuminate\Http\Response
+     */
+    public function verify($token, Request $request)
+    {
+        $user = User::where('email_token',$token)->first();
+        if (!$user) {
+            $request->session()->flash('status', 'wrong_token');
+            return redirect()->route('resend_activation');
+        }
+        if (1 == $user->verified) {
+            $request->session()->flash('status', 'You are already confirmed');
+            return view('auth.emailconfirm');
+        }
+        $user->verified = 1;
+        if($user->save()){
+            $request->session()->flash('status', 'Confirmed');
+            $this->guard()->login($user);
+            return view('auth.emailconfirm', ['status'=>'confirm']);
+        }
     }
 }
